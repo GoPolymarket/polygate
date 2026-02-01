@@ -8,14 +8,15 @@ import (
 type ErrorType string
 
 const (
-	ErrRiskReject      ErrorType = "RISK_REJECT"
-	ErrAuthFailed      ErrorType = "AUTH_FAILED"
-	ErrNonce           ErrorType = "NONCE_ERROR"
-	ErrSystemPanic     ErrorType = "SYSTEM_PANIC"
-	ErrInvalidRequest  ErrorType = "INVALID_REQUEST"
-	ErrInternal        ErrorType = "INTERNAL_ERROR"
-	ErrNotFound        ErrorType = "NOT_FOUND"
-	ErrUpstream        ErrorType = "UPSTREAM_ERROR"
+	ErrRiskReject     ErrorType = "RISK_REJECT"
+	ErrAuthFailed     ErrorType = "AUTH_FAILED"
+	ErrNonce          ErrorType = "NONCE_ERROR"
+	ErrSystemPanic    ErrorType = "SYSTEM_PANIC"
+	ErrReadOnly       ErrorType = "READ_ONLY"
+	ErrInvalidRequest ErrorType = "INVALID_REQUEST"
+	ErrInternal       ErrorType = "INTERNAL_ERROR"
+	ErrNotFound       ErrorType = "NOT_FOUND"
+	ErrUpstream       ErrorType = "UPSTREAM_ERROR"
 )
 
 // AppError is the standard error struct for the application
@@ -36,9 +37,9 @@ func (e *AppError) Error() string {
 
 func New(errType ErrorType, msg string, cause error) *AppError {
 	return &AppError{
-		Type:    errType,
-		Message: msg,
-		Cause:   cause,
+		Type:       errType,
+		Message:    msg,
+		Cause:      cause,
 		HTTPStatus: mapTypeToStatus(errType),
 		Suggestion: mapTypeToSuggestion(errType),
 	}
@@ -72,6 +73,8 @@ func mapTypeToStatus(t ErrorType) int {
 		return http.StatusConflict
 	case ErrSystemPanic:
 		return http.StatusServiceUnavailable
+	case ErrReadOnly:
+		return http.StatusServiceUnavailable
 	case ErrNotFound:
 		return http.StatusNotFound
 	case ErrUpstream:
@@ -91,6 +94,8 @@ func mapTypeToSuggestion(t ErrorType) string {
 		return "Check API keys and signatures."
 	case ErrSystemPanic:
 		return "Wait for system recovery."
+	case ErrReadOnly:
+		return "Read-only mode is enabled. Try again later."
 	default:
 		return ""
 	}

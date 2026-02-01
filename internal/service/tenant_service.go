@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/GoPolymarket/polygate/internal/model"
+	"github.com/GoPolymarket/polygate/internal/repository"
+	"gorm.io/gorm"
 )
 
 type TenantService struct {
@@ -61,11 +64,15 @@ func (s *TenantService) List(ctx context.Context, limit, offset int) ([]*model.T
 
 func (s *TenantService) Get(ctx context.Context, id string) (*model.Tenant, error) {
 	if s.repo != nil {
-		return s.repo.GetByID(ctx, id)
+		tenant, err := s.repo.GetByID(ctx, id)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, repository.ErrTenantNotFound
+		}
+		return tenant, err
 	}
 	tenant, ok := s.manager.GetTenantByID(id)
 	if !ok {
-		return nil, fmt.Errorf("tenant not found")
+		return nil, repository.ErrTenantNotFound
 	}
 	return tenant, nil
 }
@@ -96,6 +103,9 @@ func (s *TenantService) Update(ctx context.Context, id string, req TenantUpdateR
 	var tenant *model.Tenant
 	if s.repo != nil {
 		current, err := s.repo.GetByID(ctx, id)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, repository.ErrTenantNotFound
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -103,7 +113,7 @@ func (s *TenantService) Update(ctx context.Context, id string, req TenantUpdateR
 	} else {
 		current, _ := s.manager.GetTenantByID(id)
 		if current == nil {
-			return nil, fmt.Errorf("tenant not found")
+			return nil, repository.ErrTenantNotFound
 		}
 		tenant = current
 	}
@@ -150,6 +160,9 @@ func (s *TenantService) UpdateCreds(ctx context.Context, id string, req TenantCr
 	var tenant *model.Tenant
 	if s.repo != nil {
 		current, err := s.repo.GetByID(ctx, id)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, repository.ErrTenantNotFound
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -157,7 +170,7 @@ func (s *TenantService) UpdateCreds(ctx context.Context, id string, req TenantCr
 	} else {
 		current, _ := s.manager.GetTenantByID(id)
 		if current == nil {
-			return nil, fmt.Errorf("tenant not found")
+			return nil, repository.ErrTenantNotFound
 		}
 		tenant = current
 	}

@@ -3,8 +3,8 @@ module github.com/GoPolymarket/polygate
 go 1.25.6
 
 require (
-	github.com/GoPolymarket/go-builder-relayer-client v0.1.0
-	github.com/GoPolymarket/polymarket-go-sdk v1.0.1
+	github.com/GoPolymarket/go-builder-relayer-client v0.1.1
+	github.com/GoPolymarket/polymarket-go-sdk v1.0.2
 	github.com/ethereum/go-ethereum v1.16.8
 	github.com/gin-gonic/gin v1.11.0
 	github.com/google/uuid v1.6.0

@@ -8,6 +8,7 @@ import (
 
 	"github.com/GoPolymarket/polygate/internal/middleware"
 	"github.com/GoPolymarket/polygate/internal/model"
+	"github.com/GoPolymarket/polygate/internal/pkg/apperrors"
 	"github.com/GoPolymarket/polygate/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -23,7 +24,7 @@ func NewAuditHandler(svc *service.AuditService) *AuditHandler {
 func (h *AuditHandler) List(c *gin.Context) {
 	tenantVal, exists := c.Get(middleware.ContextTenantKey)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: missing tenant context"})
+		c.Error(apperrors.New(apperrors.ErrAuthFailed, "unauthorized: missing tenant context", nil))
 		return
 	}
 	tenant := tenantVal.(*model.Tenant)
@@ -39,17 +40,23 @@ func (h *AuditHandler) List(c *gin.Context) {
 	if raw := c.Query("from"); raw != "" {
 		if t, err := parseTime(raw); err == nil {
 			fromPtr = &t
+		} else {
+			c.Error(apperrors.NewInvalidRequest(err.Error()))
+			return
 		}
 	}
 	if raw := c.Query("to"); raw != "" {
 		if t, err := parseTime(raw); err == nil {
 			toPtr = &t
+		} else {
+			c.Error(apperrors.NewInvalidRequest(err.Error()))
+			return
 		}
 	}
 
 	records, err := h.svc.List(c.Request.Context(), tenant.ID, limit, fromPtr, toPtr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.Error(apperrors.New(apperrors.ErrInternal, err.Error(), err))
 		return
 	}
 	c.JSON(http.StatusOK, records)

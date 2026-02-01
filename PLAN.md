@@ -26,8 +26,8 @@ Based on PRD v1.0 (Polymarket Execution Gateway)
     - [x] Auto-resync on "Nonce too low"
 - [x] **2.2 Connection Management (D-02)**
     - [x] Global HTTP Client (Keep-Alive, Connection Pooling)
-- [ ] **2.3 Basic Rate Limiter (E-03)**
-    - [ ] Token Bucket implementation for API limits
+- [x] **2.3 Basic Rate Limiter (E-03)**
+    - [x] Token Bucket implementation for API limits
 
 ## 🔵 Phase 3: Real-time Data (The Mirror)
 **Goal:** Zero-latency data access via Shadow Orderbook.
@@ -55,6 +55,6 @@ Based on PRD v1.0 (Polymarket Execution Gateway)
 ## 🟣 Phase 5: AI Readiness & Advanced
 **Goal:** Preparing for AI Agent integration.
 
-- [ ] **5.1 Semantic Error Codes**
-- [ ] **5.2 Read-Only Mode**
-- [ ] **5.3 Structured Logging (Audit)**
+- [x] **5.1 Semantic Error Codes**
+- [x] **5.2 Read-Only Mode**
+- [x] **5.3 Structured Logging (Audit)**

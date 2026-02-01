@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,7 +27,8 @@ func main() {
 	// 1. Load Configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		logger.Error("Failed to load config", "error", err)
+		os.Exit(1)
 	}
 
 	// 2. Initialize Persistence
@@ -62,28 +62,30 @@ func main() {
 	// 3. Initialize Core Services
 	tenantManager := service.NewTenantManager(cfg, nil)
 	idempotencyStore := middleware.NewInMemIdempotencyStore()
-	
+
 	// Market Data Service
 	marketSvc := market.NewMarketService()
 	marketSvc.Start()
-	
+
 	// User Execution Stream
 	var userStream *market.UserStream
 	if cfg.Polymarket.ApiKey != "" {
 		userStream = market.NewUserStream(cfg.Polymarket.ApiKey, cfg.Polymarket.ApiSecret, cfg.Polymarket.ApiPassphrase)
 		userStream.Start()
 	}
-	
+
 	riskEngine := service.NewRiskEngine(riskRepo, marketSvc)
-	
+
 	auditSvc, err := service.NewAuditService("./logs", auditRepo)
 	if err != nil {
-		log.Fatalf("Failed to initialize audit service: %v", err)
+		logger.Error("Failed to initialize audit service", "error", err)
+		os.Exit(1)
 	}
 
 	gatewaySvc, err := service.NewGatewayService(cfg, tenantManager, riskEngine, marketSvc, userStream)
 	if err != nil {
-		log.Fatalf("Failed to initialize gateway service: %v", err)
+		logger.Error("Failed to initialize gateway service", "error", err)
+		os.Exit(1)
 	}
 
 	builderConfig := &relayer.BuilderConfig{
@@ -94,7 +96,7 @@ func main() {
 		},
 	}
 
-	accountSvc := service.NewAccountService(tenantManager, nil, builderConfig)
+	accountSvc := service.NewAccountService(tenantManager, nil, builderConfig, cfg.Relayer)
 
 	// 4. Initialize Handlers
 	orderHandler := handler.NewOrderHandler(gatewaySvc)
@@ -102,7 +104,7 @@ func main() {
 
 	// 5. Setup Router
 	r := gin.Default()
-	
+
 	// Global Middleware
 	r.Use(middleware.ErrorHandler())
 	r.Use(middleware.MetricsMiddleware()) // New Metrics Middleware
@@ -121,6 +123,7 @@ func main() {
 	// API V1 Routes
 	v1 := r.Group("/v1")
 	v1.Use(middleware.AuthMiddleware(cfg, tenantManager))
+	v1.Use(middleware.ReadOnlyMiddleware(cfg.Server.ReadOnly))
 	v1.Use(middleware.RateLimitMiddleware(tenantManager))
 	v1.Use(middleware.IdempotencyMiddleware(idempotencyStore))
 	{
@@ -143,7 +146,8 @@ func main() {
 	go func() {
 		logger.Info("🚀 PolyGate started", "port", cfg.Server.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server listen failed: %v", err)
+			logger.Error("Server listen failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -154,12 +158,13 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	marketSvc.Stop()
 	auditSvc.Close()
-	
+
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatal("Server forced to shutdown: ", err)
+		logger.Error("Server forced to shutdown", "error", err)
+		os.Exit(1)
 	}
 
 	logger.Info("Server exiting")

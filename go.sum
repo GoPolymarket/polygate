@@ -1,7 +1,7 @@
 github.com/DataDog/zstd v1.4.5 h1:EndNeuB0l9syBZhut0wns3gV1hL8zX8LIu6ZiVHWLIQ=
 github.com/DataDog/zstd v1.4.5/go.mod h1:1jcaCB/ufaK+sKp1NBhlGmpz41jOoPQ35bpF36t7BBo=
-github.com/GoPolymarket/polymarket-go-sdk v1.0.1 h1:qZv6aTm+d3QewXkfni5a1XfvKYN+FrnyK+0YI6P1nx4=
-github.com/GoPolymarket/polymarket-go-sdk v1.0.1/go.mod h1:WG5mISBCr1STpRQgq0+Q+bAhVcJgyscUH+lEhjzYatU=
+github.com/GoPolymarket/polymarket-go-sdk v1.0.2 h1:TvtYFlvBQ6MhLzGc7c9dv/IfLECLWHAtOXkK8SY5ZwI=
+github.com/GoPolymarket/polymarket-go-sdk v1.0.2/go.mod h1:WG5mISBCr1STpRQgq0+Q+bAhVcJgyscUH+lEhjzYatU=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20260129130236-980997f64e25 h1:0/qk6PCyqRadMiHQzH5Ld1TdaJn5tKcSsg8OQ+lW76I=

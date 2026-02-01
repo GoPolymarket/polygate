@@ -1,9 +1,9 @@
 package config
 
 import (
-	"log"
 	"strings"
 
+	"github.com/GoPolymarket/polygate/internal/pkg/logger"
 	"github.com/spf13/viper"
 )
 
@@ -23,7 +23,8 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port string `mapstructure:"port"`
+	Port     string `mapstructure:"port"`
+	ReadOnly bool   `mapstructure:"read_only"`
 }
 
 type PolymarketConfig struct {
@@ -124,6 +125,7 @@ func Load() (*Config, error) {
 
 	// Defaults
 	viper.SetDefault("server.port", "8080")
+	viper.SetDefault("server.read_only", false)
 	viper.SetDefault("risk.max_slippage", 0.05)
 	viper.SetDefault("auth.require_api_key", false)
 	viper.SetDefault("auth.admin_key", "")
@@ -155,7 +157,7 @@ func Load() (*Config, error) {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			log.Println("No config file found, using defaults and env vars")
+			logger.Warn("No config file found, using defaults and env vars")
 		} else {
 			return nil, err
 		}

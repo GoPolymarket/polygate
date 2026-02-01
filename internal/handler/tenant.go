@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/GoPolymarket/polygate/internal/model"
+	"github.com/GoPolymarket/polygate/internal/pkg/apperrors"
+	"github.com/GoPolymarket/polygate/internal/repository"
 	"github.com/GoPolymarket/polygate/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -34,7 +37,7 @@ func (h *TenantHandler) List(c *gin.Context) {
 
 	tenants, err := h.svc.List(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.Error(mapTenantServiceError(err))
 		return
 	}
 	c.JSON(http.StatusOK, toTenantPublicList(tenants))
@@ -43,12 +46,12 @@ func (h *TenantHandler) List(c *gin.Context) {
 func (h *TenantHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id required"})
+		c.Error(apperrors.NewInvalidRequest("id required"))
 		return
 	}
 	tenant, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.Error(mapTenantServiceError(err))
 		return
 	}
 	c.JSON(http.StatusOK, toTenantPublic(tenant))
@@ -57,12 +60,12 @@ func (h *TenantHandler) Get(c *gin.Context) {
 func (h *TenantHandler) Create(c *gin.Context) {
 	var req service.TenantCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(apperrors.NewInvalidRequest(err.Error()))
 		return
 	}
 	tenant, err := h.svc.Create(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(mapTenantServiceError(err))
 		return
 	}
 	c.JSON(http.StatusCreated, toTenantPublic(tenant))
@@ -71,17 +74,17 @@ func (h *TenantHandler) Create(c *gin.Context) {
 func (h *TenantHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id required"})
+		c.Error(apperrors.NewInvalidRequest("id required"))
 		return
 	}
 	var req service.TenantUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(apperrors.NewInvalidRequest(err.Error()))
 		return
 	}
 	tenant, err := h.svc.Update(c.Request.Context(), id, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(mapTenantServiceError(err))
 		return
 	}
 	c.JSON(http.StatusOK, toTenantPublic(tenant))
@@ -90,17 +93,17 @@ func (h *TenantHandler) Update(c *gin.Context) {
 func (h *TenantHandler) UpdateCreds(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id required"})
+		c.Error(apperrors.NewInvalidRequest("id required"))
 		return
 	}
 	var req service.TenantCredsUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(apperrors.NewInvalidRequest(err.Error()))
 		return
 	}
 	tenant, err := h.svc.UpdateCreds(c.Request.Context(), id, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(mapTenantServiceError(err))
 		return
 	}
 	c.JSON(http.StatusOK, toTenantPublic(tenant))
@@ -109,11 +112,11 @@ func (h *TenantHandler) UpdateCreds(c *gin.Context) {
 func (h *TenantHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id required"})
+		c.Error(apperrors.NewInvalidRequest("id required"))
 		return
 	}
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(mapTenantServiceError(err))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
@@ -122,12 +125,12 @@ func (h *TenantHandler) Delete(c *gin.Context) {
 func (h *TenantHandler) GetSecret(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id required"})
+		c.Error(apperrors.NewInvalidRequest("id required"))
 		return
 	}
 	tenant, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.Error(mapTenantServiceError(err))
 		return
 	}
 	c.JSON(http.StatusOK, tenant)
@@ -192,4 +195,18 @@ func maskSecret(value string) string {
 		return "****"
 	}
 	return value[:4] + "..." + value[len(value)-4:]
+}
+
+func mapTenantServiceError(err error) *apperrors.AppError {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, repository.ErrTenantNotFound) {
+		return apperrors.New(apperrors.ErrNotFound, err.Error(), err)
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "required") || strings.Contains(msg, "invalid") {
+		return apperrors.NewInvalidRequest(err.Error())
+	}
+	return apperrors.New(apperrors.ErrInternal, err.Error(), err)
 }

@@ -1,5 +1,6 @@
 server:
   port: "8080"
+  read_only: false
 
 auth:
   # Optional: Gateway API Key required by X-Gateway-Key header
