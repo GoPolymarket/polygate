@@ -1,38 +1,30 @@
 # Build Stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Install git for fetching dependencies
-RUN apk add --no-cache git
-
-# Copy dependency files
+# Cache dependencies
 COPY go.mod go.sum ./
-
-# Since we are in a monorepo-like structure locally, we might need special handling.
-# But assuming standard build context:
 RUN go mod download
 
-# Copy source code
+# Build
 COPY . .
+RUN go build -o /bin/polygate ./cmd/server
+RUN go build -o /bin/inspector ./cmd/inspector
 
-# Build binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o polygate-server ./cmd/server
-
-# Runtime Stage
+# Run Stage
 FROM alpine:latest
 
 WORKDIR /app
 
 # Install CA certificates for HTTPS
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata
 
-# Copy binary from builder
-COPY --from=builder /app/polygate-server .
-COPY --from=builder /app/config.yaml.example ./config.yaml
+COPY --from=builder /bin/polygate .
+COPY --from=builder /bin/inspector .
+COPY config.yaml.example ./config.yaml
 
-# Expose port
+# Expose API and Metrics ports
 EXPOSE 8080
 
-# Run
-CMD ["./polygate-server"]
+CMD ["./polygate"]

@@ -7,33 +7,33 @@ auth:
   api_key: "sk-default-12345"
   # Optional: Admin key required for tenant CRUD
   admin_key: ""
-  # Optional: Admin secret key required for tenant credential access
   admin_secret_key: ""
 
+# --- Persistence (Optional) ---
 database:
-  # Optional: Postgres DSN for persistence
+  # Postgres DSN (Leave empty to use In-Memory/File storage)
   dsn: "postgres://postgres:postgres@localhost:5432/polygate?sslmode=disable"
-  # Cleanup policy (DB only)
-  idempotency_retention_hours: 168
-  audit_retention_days: 30
-  risk_retention_days: 30
-  cleanup_interval_minutes: 60
 
 redis:
-  # Optional: Redis for idempotency/audit fallback
-  addr: ""
+  # Redis Address (Leave empty to use In-Memory Risk Engine)
+  addr: "localhost:6379"
   password: ""
   db: 0
-  idempotency_ttl_seconds: 86400
-  audit_list_key: "audit_logs"
-  audit_list_max: 10000
 
+# --- Observability ---
+metrics:
+  enabled: true
+  path: "/metrics"
+
+rate_limit:
+  qps: 50
+  burst: 100
+
+# --- Chain & Signing ---
 chain:
-  # Optional: Polygon RPC URL (required for Safe/EIP-1271 signature verification)
-  rpc_url: ""
+  # Required for Safe/EIP-1271 verification
+  rpc_url: "https://polygon-rpc.com"
   eip1271_cache_seconds: 60
-  eip1271_timeout_ms: 5000
-  eip1271_retries: 1
 
 polymarket:
   # User's Trading Credentials (L2)
@@ -41,38 +41,23 @@ polymarket:
   api_key: ""
   api_secret: ""
   api_passphrase: ""
-  # Optional: Gateway signing key (custodial mode)
+  
+  # Proxy Address (EOA) - Your Polygon Wallet Address (NOT the Proxy)
+  # Use ./cmd/inspector to derive the correct Proxy Address if needed
+  proxy_address: ""
+  
+  # Private Key (EOA) - Required for local signing
+  # Format: 0x...
   private_key: ""
 
 risk:
   max_slippage: 0.05    # 5% max slippage
   max_order_value: 500  # Max 500 USDC per order
-  max_daily_value: 0    # 0 = no daily limit
-  max_daily_orders: 0   # 0 = no daily order limit
+  max_daily_value: 10000 
+  max_daily_orders: 1000
   blacklisted_token_ids: []
   allow_unverified_signatures: false
-
-# Advanced: Override the default builder attribution
-# builder:
-#   api_key: "..."
 
 relayer:
   base_url: "https://relayer-v2.polymarket.com"
   chain_id: 137
-
-# Multi-tenant example (optional)
-# tenants:
-#   - id: "tenant-a"
-#     name: "Team A"
-#     api_key: "sk-tenant-a"
-#     signers:
-#       - "0xYourSignerAddress"
-#     polymarket:
-#       api_key: "TENANT_A_L2_KEY"
-#       api_secret: "TENANT_A_L2_SECRET"
-#       api_passphrase: "TENANT_A_L2_PASSPHRASE"
-#     risk:
-#       max_order_value: 1000
-#       max_daily_value: 10000
-#       max_slippage: 0.03
-#       blacklisted_token_ids: ["123"]

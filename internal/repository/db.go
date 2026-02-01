@@ -1,29 +1,56 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/GoPolymarket/polygate/internal/config"
-	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver
-	"github.com/jmoiron/sqlx"
+	"github.com/GoPolymarket/polygate/internal/model"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-func NewDB(cfg *config.Config) (*sqlx.DB, error) {
-	dsn := "postgres://postgres:postgres@localhost:5432/polygate?sslmode=disable"
-	if cfg != nil && cfg.Database.DSN != "" {
-		dsn = cfg.Database.DSN
+type DB struct {
+	Client *gorm.DB
+}
+
+func NewDB(cfg *config.Config) (*DB, error) {
+	if cfg.Database.DSN == "" {
+		return nil, fmt.Errorf("database dsn is empty")
 	}
 
-	db, err := sqlx.Connect("pgx", dsn)
+	db, err := gorm.Open(postgres.Open(cfg.Database.DSN), &gorm.Config{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to db: %w", err)
+		return nil, err
 	}
 
-	// 连接池设置
-	db.SetMaxOpenConns(50)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(1 * time.Hour)
+	return &DB{Client: db}, nil
+}
 
-	return db, nil
+type PostgresAuditRepo struct {
+	db *DB
+}
+
+func NewPostgresAuditRepo(db *DB) *PostgresAuditRepo {
+	return &PostgresAuditRepo{db: db}
+}
+
+func (r *PostgresAuditRepo) Insert(ctx context.Context, entry *model.AuditLog) error {
+	return r.db.Client.WithContext(ctx).Create(entry).Error
+}
+
+func (r *PostgresAuditRepo) List(ctx context.Context, tenantID string, limit int, from, to *time.Time) ([]*model.AuditLog, error) {
+	var logs []*model.AuditLog
+	tx := r.db.Client.WithContext(ctx).Where("tenant_id = ?", tenantID)
+
+	if from != nil {
+		tx = tx.Where("created_at >= ?", from)
+	}
+	if to != nil {
+		tx = tx.Where("created_at <= ?", to)
+	}
+
+	err := tx.Order("created_at desc").Limit(limit).Find(&logs).Error
+	return logs, err
 }

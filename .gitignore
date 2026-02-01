@@ -1,0 +1,19 @@
+# Binaries
+polygate
+main
+
+# Config & Secrets
+.env
+config.yaml
+config.yml
+*.key
+*.pem
+
+# Logs
+logs/
+*.log
+
+# Editor
+.idea/
+.vscode/
+.DS_Store

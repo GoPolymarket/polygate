@@ -7,6 +7,7 @@ import (
 
 	"github.com/GoPolymarket/polygate/internal/config"
 	"github.com/GoPolymarket/polygate/internal/model"
+	"github.com/GoPolymarket/polygate/internal/signer"
 	"github.com/GoPolymarket/polymarket-go-sdk"
 	"github.com/GoPolymarket/polymarket-go-sdk/pkg/auth"
 	"golang.org/x/time/rate"
@@ -59,8 +60,8 @@ func NewTenantManager(cfg *config.Config, repo TenantRepo) *TenantManager {
 					AllowUnverifiedSignatures: cfg.Risk.AllowUnverifiedSignatures || tenantCfg.Risk.AllowUnverifiedSignatures,
 				},
 				Rate: model.RateLimitConfig{
-					QPS:   10,
-					Burst: 20,
+					QPS:   cfg.RateLimit.QPS,
+					Burst: cfg.RateLimit.Burst,
 				},
 			}
 			tm.RegisterTenant(tenant)
@@ -89,8 +90,8 @@ func NewTenantManager(cfg *config.Config, repo TenantRepo) *TenantManager {
 				AllowUnverifiedSignatures: cfg.Risk.AllowUnverifiedSignatures,
 			},
 			Rate: model.RateLimitConfig{
-				QPS:   10, // 默认 10 QPS
-				Burst: 20,
+				QPS:   cfg.RateLimit.QPS,
+				Burst: cfg.RateLimit.Burst,
 			},
 		}
 		if defaultTenant.ApiKey == "" {
@@ -242,7 +243,7 @@ func (tm *TenantManager) GetClientForTenant(t *model.Tenant) (*polymarket.Client
 
 		client = client.WithAuth(signer, apiKey)
 	} else if t.Creds.Address != "" && t.Creds.L2ApiKey != "" {
-		signer, err := newStaticSigner(t.Creds.Address, 137)
+		signer, err := signer.NewStaticSigner(t.Creds.Address, 137)
 		if err != nil {
 			return nil, fmt.Errorf("invalid signer address for tenant %s: %w", t.ID, err)
 		}

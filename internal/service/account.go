@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/GoPolymarket/builder-relayer-go-client/pkg/signer"
-	"github.com/GoPolymarket/builder-relayer-go-client/pkg/types"
-	relayer "github.com/GoPolymarket/builder-relayer-go-client"
+	"github.com/GoPolymarket/go-builder-relayer-client/pkg/signer"
+	"github.com/GoPolymarket/go-builder-relayer-client/pkg/types"
+	relayer "github.com/GoPolymarket/go-builder-relayer-client"
 	"github.com/GoPolymarket/polygate/internal/model"
 	"github.com/GoPolymarket/polymarket-go-sdk/pkg/auth"
 	"github.com/ethereum/go-ethereum/common"

@@ -17,6 +17,8 @@ type Config struct {
 	Builder    BuilderConfig    `mapstructure:"builder"`
 	Relayer    RelayerConfig    `mapstructure:"relayer"`
 	Risk       RiskConfig       `mapstructure:"risk"`
+	RateLimit  RateLimitConfig  `mapstructure:"rate_limit"`
+	Metrics    MetricsConfig    `mapstructure:"metrics"`
 	Tenants    []TenantConfig   `mapstructure:"tenants"`
 }
 
@@ -29,6 +31,9 @@ type PolymarketConfig struct {
 	ApiKey        string `mapstructure:"api_key"`
 	ApiSecret     string `mapstructure:"api_secret"`
 	ApiPassphrase string `mapstructure:"api_passphrase"`
+
+	// Proxy Address (EOA) - Required for EIP-712 signing
+	ProxyAddress string `mapstructure:"proxy_address"`
 
 	// Optional: L1 Private Key for signing/onboarding (future use)
 	PrivateKey string `mapstructure:"private_key"`
@@ -86,6 +91,16 @@ type RiskConfig struct {
 	AllowUnverifiedSignatures bool     `mapstructure:"allow_unverified_signatures"` // allow EIP-1271 or unknown signature types
 }
 
+type MetricsConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Path    string `mapstructure:"path"`
+}
+
+type RateLimitConfig struct {
+	QPS   float64 `mapstructure:"qps"`
+	Burst int     `mapstructure:"burst"`
+}
+
 type TenantConfig struct {
 	ID         string           `mapstructure:"id"`
 	Name       string           `mapstructure:"name"`
@@ -123,6 +138,12 @@ func Load() (*Config, error) {
 	viper.SetDefault("database.audit_retention_days", 30)
 	viper.SetDefault("database.risk_retention_days", 30)
 	viper.SetDefault("database.cleanup_interval_minutes", 60)
+	viper.SetDefault("rate_limit.qps", 50)
+	viper.SetDefault("rate_limit.burst", 100)
+	viper.SetDefault("metrics.enabled", true)
+	viper.SetDefault("metrics.path", "/metrics")
+	viper.SetDefault("redis.addr", "localhost:6379")
+	viper.SetDefault("redis.db", 0)
 
 	// Default Builder Credentials (YOUR KEYS GO HERE)
 	// 当用户没有在配置文件里覆盖这些值时，就会使用你的 Key

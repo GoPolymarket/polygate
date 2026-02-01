@@ -3,64 +3,108 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/GoPolymarket/polygate/internal/config"
+	"github.com/GoPolymarket/polygate/internal/manager"
+	"github.com/GoPolymarket/polygate/internal/market"
 	"github.com/GoPolymarket/polygate/internal/model"
-
+	"github.com/GoPolymarket/polygate/internal/pkg/logger"
+	"github.com/GoPolymarket/polygate/internal/signer"
 	"github.com/GoPolymarket/polymarket-go-sdk"
 	"github.com/GoPolymarket/polymarket-go-sdk/pkg/auth"
 	"github.com/GoPolymarket/polymarket-go-sdk/pkg/clob"
 	"github.com/GoPolymarket/polymarket-go-sdk/pkg/clob/clobtypes"
+	sdktypes "github.com/GoPolymarket/polymarket-go-sdk/pkg/types"
 	"github.com/shopspring/decimal"
 )
 
 type GatewayService struct {
-	tm      *TenantManager
-	risk    *RiskEngine
-	config  *config.Config
-	rpcURL  string
-	eip1271 *EIP1271Verifier
+	tm         *TenantManager
+	risk       *RiskEngine
+	config     *config.Config
+	nonceMgr   *manager.NonceManager
+	market     *market.MarketService
+	userStream *market.UserStream
+	rpcURL     string
+	eip1271    *EIP1271Verifier
+	fastSigner *signer.Signer
+	httpClient *http.Client
+	panicMode  atomic.Bool
 }
 
-func NewGatewayService(cfg *config.Config, tm *TenantManager, risk *RiskEngine) (*GatewayService, error) {
-	return &GatewayService{
-		tm:     tm,
-		risk:   risk,
-		config: cfg,
-		rpcURL: cfg.Chain.RPCURL,
-	}, nil
+func NewGatewayService(cfg *config.Config, tm *TenantManager, risk *RiskEngine, marketSvc *market.MarketService, userStream *market.UserStream) (*GatewayService, error) {
+	// Initialize Nonce Manager
+	nonceMgr, err := manager.NewNonceManager(cfg.Chain.RPCURL)
+	if err != nil {
+		if cfg.Chain.RPCURL != "" {
+			fmt.Printf("Warning: Failed to init nonce manager: %v\n", err)
+		}
+	}
+
+	// Initialize High-Performance HTTP Client
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 100,
+			IdleConnTimeout:     90 * time.Second,
+		},
+		Timeout: 10 * time.Second,
+	}
+
+	svc := &GatewayService{
+		tm:         tm,
+		risk:       risk,
+		config:     cfg,
+		nonceMgr:   nonceMgr,
+		market:     marketSvc,
+		userStream: userStream,
+		rpcURL:     cfg.Chain.RPCURL,
+		httpClient: httpClient,
+	}
+
+	// Initialize optimized signer if private key is available
+	if cfg.Polymarket.PrivateKey != "" {
+		pk := strings.TrimPrefix(cfg.Polymarket.PrivateKey, "0x")
+		fastSigner, err := signer.NewSigner(pk, auth.PolygonChainID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize fast signer: %w", err)
+		}
+		svc.fastSigner = fastSigner
+	}
+
+	return svc, nil
 }
 
-// OrderRequest represents the incoming JSON body
-type OrderRequest struct {
-	TokenID       string                   `json:"token_id" binding:"required"`
-	Price         float64                  `json:"price" binding:"required"`
-	Size          float64                  `json:"size" binding:"required"`
-	Side          string                   `json:"side" binding:"required,oneof=BUY SELL"` // BUY or SELL
-	OrderType     string                   `json:"order_type,omitempty"`                   // GTC/GTD/FAK/FOK
-	PostOnly      *bool                    `json:"post_only,omitempty"`
-	Expiration    int64                    `json:"expiration,omitempty"` // unix seconds (GTD)
-	Signable      *clobtypes.SignableOrder `json:"signable,omitempty"`
-	Signature     string                   `json:"signature,omitempty"`
-	Signer        string                   `json:"signer,omitempty"`
-	SignatureType *int                     `json:"signature_type,omitempty"` // 0=EOA,1=Proxy,2=Safe
-	L2            *L2Creds                 `json:"l2,omitempty"`
+func (s *GatewayService) GetFills() []market.Fill {
+	if s.userStream == nil {
+		return nil
+	}
+	return s.userStream.GetFills()
 }
 
-type L2Creds struct {
-	APIKey        string `json:"api_key"`
-	APISecret     string `json:"api_secret"`
-	APIPassphrase string `json:"api_passphrase"`
+func (s *GatewayService) GetOrderbook(tokenID string) *market.Orderbook {
+	if s.market == nil {
+		return nil
+	}
+	book := s.market.GetBook(tokenID)
+	if book == nil {
+		s.market.Subscribe([]string{tokenID})
+		return nil
+	}
+	return book
 }
 
-type TypedOrderResponse struct {
-	Signable  *clobtypes.SignableOrder `json:"signable"`
-	TypedData interface{}              `json:"typed_data"`
-}
+// Struct definitions moved to internal/model/dto.go
 
-func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, req OrderRequest) (*clobtypes.OrderResponse, error) {
+func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, req model.OrderRequest) (*clobtypes.OrderResponse, error) {
+	if s.panicMode.Load() {
+		return nil, fmt.Errorf("system in panic mode: all trading suspended")
+	}
+
 	if req.Signature != "" && req.Signable == nil {
 		return nil, fmt.Errorf("signable order required when providing signature")
 	}
@@ -80,16 +124,11 @@ func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, r
 	}
 
 	// 3. Resolve signer (custodial or non-custodial)
-	var signer auth.Signer
+	var signerInst auth.Signer
 	useGatewaySigner := false
 	if strings.TrimSpace(req.Signature) == "" {
-		if tenant.Creds.PrivateKey == "" {
-			return nil, fmt.Errorf("signature required or tenant private key not configured")
-		}
-		var err error
-		signer, err = auth.NewPrivateKeySigner(tenant.Creds.PrivateKey, auth.PolygonChainID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create signer: %w", err)
+		if s.fastSigner == nil {
+			return nil, fmt.Errorf("signature required or gateway private key not configured")
 		}
 		useGatewaySigner = true
 	} else {
@@ -109,7 +148,7 @@ func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, r
 			return nil, fmt.Errorf("signer not allowed for tenant")
 		}
 		var err error
-		signer, err = newStaticSigner(signerAddr, auth.PolygonChainID)
+		signerInst, err = signer.NewStaticSigner(signerAddr, auth.PolygonChainID)
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +163,14 @@ func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, r
 	// 5. Build Signable Order if not provided
 	client := s.newClient(nil, nil)
 	if signable == nil {
-		signable, err = s.buildSignable(ctx, client, signer, req)
+		var signerForBuild auth.Signer
+		if useGatewaySigner {
+			signerForBuild, _ = signer.NewStaticSigner(s.fastSigner.Address().Hex(), auth.PolygonChainID)
+		} else {
+			signerForBuild = signerInst
+		}
+
+		signable, err = s.buildSignable(ctx, client, signerForBuild, req)
 		if err != nil {
 			return nil, err
 		}
@@ -141,26 +187,59 @@ func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, r
 	}
 
 	// 7. Execute via SDK
-	execClient := s.newClient(signer, apiKey)
+	execClient := s.newClient(signerInst, apiKey)
 	var resp clobtypes.OrderResponse
+
 	if useGatewaySigner {
-		resp, err = execClient.CLOB.CreateOrderFromSignable(ctx, signable)
+		// --- FAST PATH ---
+		optOrder := toOptimizedOrder(signable.Order)
+		
+		if s.nonceMgr != nil {
+			exNonce, err := s.nonceMgr.GetExchangeNonce(ctx, s.fastSigner.Address())
+			if err == nil {
+				optOrder.Nonce = exNonce
+				signable.Order.Nonce = sdktypes.U256{Int: exNonce}
+			}
+		}
+
+		signature, err := s.fastSigner.SignOrder(optOrder)
 		if err != nil {
+			return nil, fmt.Errorf("signing failed: %w", err)
+		}
+
+		signed := &clobtypes.SignedOrder{
+			Order:     *signable.Order,
+			Signature: signature,
+			Owner:     apiKey.Key,
+			OrderType: signable.OrderType,
+			PostOnly:  signable.PostOnly,
+		}
+		resp, err = execClient.CLOB.PostOrder(ctx, signed)
+		if err != nil {
+			// Auto-Recovery: Check for Nonce errors
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "nonce") {
+				logger.Warn("Detected nonce error, triggering re-sync", "error", err)
+				if s.nonceMgr != nil {
+					_, _ = s.nonceMgr.SyncExchangeNonce(ctx, signable.Order.Maker)
+				}
+			}
 			return nil, fmt.Errorf("polymarket api error: %w", err)
 		}
 	} else {
+		// --- EXTERNAL SIGNER PATH ---
 		sigType := req.SignatureType
 		if sigType == nil && signable.Order.SignatureType != nil {
 			sigType = signable.Order.SignatureType
 		}
-		if !signatureTypeSupported(sigType) && !tenant.Risk.AllowUnverifiedSignatures {
+		if !signer.SignatureTypeSupported(sigType) && !tenant.Risk.AllowUnverifiedSignatures {
 			return nil, fmt.Errorf("signature type not supported for verification")
 		}
 		if sigType != nil && *sigType == int(auth.SignatureGnosisSafe) {
 			if tenant.Risk.AllowUnverifiedSignatures {
-				// Skip verification if explicitly allowed.
+				// Skip verification
 			} else {
-				hash, err := typedDataHash(signable.Order, signer.Address(), auth.PolygonChainID)
+				hash, err := signer.TypedDataHash(signable.Order, signerInst.Address(), auth.PolygonChainID)
 				if err != nil {
 					return nil, fmt.Errorf("failed to hash typed data")
 				}
@@ -176,12 +255,12 @@ func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, r
 					return nil, fmt.Errorf("invalid safe signature")
 				}
 			}
-		} else if signatureTypeSupported(sigType) {
+		} else if signer.SignatureTypeSupported(sigType) {
 			signerAddr := strings.TrimSpace(req.Signer)
 			if signerAddr == "" {
 				signerAddr = signable.Order.Signer.Hex()
 			}
-			if err := verifyOrderSignature(signable.Order, req.Signature, signerAddr, auth.PolygonChainID); err != nil {
+			if err := signer.VerifyOrderSignature(signable.Order, req.Signature, signerAddr, auth.PolygonChainID); err != nil {
 				return nil, fmt.Errorf("invalid signature")
 			}
 		}
@@ -198,25 +277,50 @@ func (s *GatewayService) PlaceOrder(ctx context.Context, tenant *model.Tenant, r
 		}
 	}
 
-	// 8. Update Risk State (Post-Trade)
 	s.risk.PostOrderHook(ctx, tenant, riskReq)
 
 	return &resp, nil
 }
 
-// CancelOrderInput defines parameters for cancelling a single order
-type CancelOrderInput struct {
-	ID string `json:"id" binding:"required"`
+func (s *GatewayService) ActivatePanicMode(ctx context.Context, tenant *model.Tenant) error {
+	s.panicMode.Store(true)
+	_, err := s.CancelAllOrders(ctx, tenant)
+	return err
 }
 
-func (s *GatewayService) CancelOrder(ctx context.Context, tenant *model.Tenant, input CancelOrderInput) (*clobtypes.CancelResponse, error) {
-	// 1. Get Client
+func toOptimizedOrder(o *clobtypes.Order) *signer.Order {
+	side := uint8(0) // BUY
+	if strings.ToUpper(o.Side) == "SELL" {
+		side = 1
+	}
+	
+	sigType := uint8(0)
+	if o.SignatureType != nil {
+		sigType = uint8(*o.SignatureType)
+	}
+
+	return &signer.Order{
+		Salt:          o.Salt.Int,
+		Maker:         o.Maker,
+		Signer:        o.Signer,
+		Taker:         o.Taker,
+		TokenID:       o.TokenID.Int,
+		MakerAmount:   o.MakerAmount.BigInt(),
+		TakerAmount:   o.TakerAmount.BigInt(),
+		Expiration:    o.Expiration.Int,
+		Nonce:         o.Nonce.Int,
+		FeeRateBps:    o.FeeRateBps.BigInt(),
+		Side:          side,
+		SignatureType: sigType,
+	}
+}
+
+func (s *GatewayService) CancelOrder(ctx context.Context, tenant *model.Tenant, input model.CancelOrderInput) (*clobtypes.CancelResponse, error) {
 	client, err := s.tm.GetClientForTenant(tenant)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Prepare Cancel Request
 	req := &clobtypes.CancelOrderRequest{
 		OrderID: input.ID,
 	}
@@ -229,15 +333,13 @@ func (s *GatewayService) CancelOrder(ctx context.Context, tenant *model.Tenant, 
 	return &resp, nil
 }
 
-// CancelAllOrders cancels all open orders for the tenant
 func (s *GatewayService) CancelAllOrders(ctx context.Context, tenant *model.Tenant) (*clobtypes.CancelAllResponse, error) {
 	client, err := s.tm.GetClientForTenant(tenant)
 	if err != nil {
 		return nil, err
 	}
 
-	// SDK usually takes a cancel all request object or nil
-	resp, err := client.CLOB.CancelAll(ctx) // Fixed: Remove nil arg
+	resp, err := client.CLOB.CancelAll(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to cancel all orders: %w", err)
 	}
@@ -245,7 +347,7 @@ func (s *GatewayService) CancelAllOrders(ctx context.Context, tenant *model.Tena
 	return &resp, nil
 }
 
-func (s *GatewayService) BuildTypedOrder(ctx context.Context, tenant *model.Tenant, req OrderRequest) (*TypedOrderResponse, error) {
+func (s *GatewayService) BuildTypedOrder(ctx context.Context, tenant *model.Tenant, req model.OrderRequest) (*model.TypedOrderResponse, error) {
 	if req.Signer == "" {
 		return nil, fmt.Errorf("signer is required")
 	}
@@ -255,20 +357,20 @@ func (s *GatewayService) BuildTypedOrder(ctx context.Context, tenant *model.Tena
 	if err := s.risk.CheckOrder(ctx, tenant, req); err != nil {
 		return nil, err
 	}
-	signer, err := newStaticSigner(req.Signer, auth.PolygonChainID)
+	signerInst, err := signer.NewStaticSigner(req.Signer, auth.PolygonChainID)
 	if err != nil {
 		return nil, err
 	}
 	client := s.newClient(nil, nil)
-	signable, err := s.buildSignable(ctx, client, signer, req)
+	signable, err := s.buildSignable(ctx, client, signerInst, req)
 	if err != nil {
 		return nil, err
 	}
-	typedData, err := buildTypedData(signable.Order, signer.Address(), auth.PolygonChainID)
+	typedData, err := signer.BuildTypedData(signable.Order, signerInst.Address(), auth.PolygonChainID)
 	if err != nil {
 		return nil, err
 	}
-	return &TypedOrderResponse{
+	return &model.TypedOrderResponse{
 		Signable:  signable,
 		TypedData: typedData,
 	}, nil
@@ -277,6 +379,7 @@ func (s *GatewayService) BuildTypedOrder(ctx context.Context, tenant *model.Tena
 func (s *GatewayService) newClient(signer auth.Signer, apiKey *auth.APIKey) *polymarket.Client {
 	opts := []polymarket.Option{
 		polymarket.WithUseServerTime(true),
+		polymarket.WithHTTPClient(s.httpClient),
 	}
 	if s.config.Builder.ApiKey != "" {
 		opts = append(opts, polymarket.WithBuilderAttribution(
@@ -304,7 +407,7 @@ func (s *GatewayService) getEIP1271Verifier() (*EIP1271Verifier, error) {
 	return s.eip1271, nil
 }
 
-func (s *GatewayService) buildSignable(ctx context.Context, client *polymarket.Client, signer auth.Signer, req OrderRequest) (*clobtypes.SignableOrder, error) {
+func (s *GatewayService) buildSignable(ctx context.Context, client *polymarket.Client, signer auth.Signer, req model.OrderRequest) (*clobtypes.SignableOrder, error) {
 	orderType := parseOrderType(req.OrderType)
 	builder := clob.NewOrderBuilder(client.CLOB, signer).
 		TokenID(req.TokenID).
@@ -365,7 +468,7 @@ func parseOrderType(raw string) clobtypes.OrderType {
 	}
 }
 
-func (s *GatewayService) checkMaxSlippage(ctx context.Context, client *polymarket.Client, tenant *model.Tenant, req OrderRequest) error {
+func (s *GatewayService) checkMaxSlippage(ctx context.Context, client *polymarket.Client, tenant *model.Tenant, req model.OrderRequest) error {
 	if tenant.Risk.MaxSlippage <= 0 {
 		return nil
 	}
@@ -406,7 +509,7 @@ func (s *GatewayService) checkMaxSlippage(ctx context.Context, client *polymarke
 	return nil
 }
 
-func resolveAPIKey(tenant *model.Tenant, req OrderRequest) (*auth.APIKey, error) {
+func resolveAPIKey(tenant *model.Tenant, req model.OrderRequest) (*auth.APIKey, error) {
 	if req.L2 != nil && req.L2.APIKey != "" && req.L2.APISecret != "" && req.L2.APIPassphrase != "" {
 		return &auth.APIKey{
 			Key:        req.L2.APIKey,
@@ -437,7 +540,7 @@ func tenantAllowsSigner(tenant *model.Tenant, signer string) bool {
 	return false
 }
 
-func requestFromOrder(signable *clobtypes.SignableOrder) OrderRequest {
+func requestFromOrder(signable *clobtypes.SignableOrder) model.OrderRequest {
 	order := signable.Order
 	price := 0.0
 	size := 0.0
@@ -467,7 +570,7 @@ func requestFromOrder(signable *clobtypes.SignableOrder) OrderRequest {
 			}
 		}
 	}
-	return OrderRequest{
+	return model.OrderRequest{
 		TokenID: tokenID,
 		Price:   price,
 		Size:    size,

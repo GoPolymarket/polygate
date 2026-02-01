@@ -3,13 +3,13 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/GoPolymarket/polygate/internal/model"
+	"github.com/GoPolymarket/polygate/internal/pkg/logger"
 )
 
 type AuditService struct {
@@ -59,7 +59,7 @@ func (s *AuditService) Log(entry *model.AuditLog) {
 	default:
 		// 缓冲区满，丢弃日志以保护主流程，并打印警告
 		// 生产环境应考虑写入备用存储或告警
-		log.Println("⚠️ Audit log buffer full, dropping log entry")
+		logger.Warn("Audit log buffer full, dropping log entry")
 	}
 }
 
@@ -81,11 +81,11 @@ func (s *AuditService) processLogs() {
 	for entry := range s.logChan {
 		if s.repo != nil {
 			if err := s.repo.Insert(context.Background(), entry); err != nil {
-				log.Printf("❌ Failed to write audit log to DB: %v", err)
+				logger.Error("Failed to write audit log to DB", "error", err)
 			}
 		}
 		if err := encoder.Encode(entry); err != nil {
-			log.Printf("❌ Failed to write audit log: %v", err)
+			logger.Error("Failed to write audit log", "error", err)
 		}
 	}
 }

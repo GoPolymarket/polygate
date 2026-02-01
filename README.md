@@ -191,11 +191,55 @@ curl -X PUT http://localhost:8080/v1/tenants/tenant-a/creds \
 
 PolyGate acts as a sidecar to your trading bot:
 
+Simplified:
 ```mermaid
 graph LR
-    A[Your Python/JS Bot] -- HTTP JSON --> B[PolyGate (Localhost)]
-    B -- EIP-712 / HMAC --> C[Polymarket CLOB]
-    B -- Risk Check --> B
+  A[Client/Bot] -->|HTTP JSON| B[PolyGate API]
+  B --> C[Polymarket CLOB]
+  B --> D[Risk Engine]
+  B --> E[Audit Logs]
+```
+
+Detailed:
+```mermaid
+graph TD
+  Client[Client/Bot] -->|HTTP JSON| API[PolyGate API (Gin)]
+  API --> Health[/health]
+
+  API --> MW[Middleware]
+  MW --> Auth[Auth (X-Gateway-Key)]
+  MW --> Rate[Rate Limit]
+  MW --> Idem[Idempotency]
+  MW --> Audit[Audit]
+
+  API --> Handlers[Handlers]
+  Handlers --> Orders[OrderHandler]
+  Handlers --> Account[AccountHandler]
+
+  Orders --> Gateway[GatewayService]
+  Account --> AccountSvc[AccountService]
+
+  Gateway --> TenantMgr[TenantManager]
+  Gateway --> Risk[RiskEngine]
+  Gateway --> SDK[Polymarket SDK/CLOB]
+  Gateway --> EIP1271[EIP-1271 Verifier] --> RPC[Polygon RPC]
+
+  AccountSvc --> Relayer[Builder Relayer]
+
+  Risk --> UsageRepo[Usage Repo] --> PG[(Postgres)]
+  UsageRepo --> Redis[(Redis)]
+  UsageRepo --> Mem[(In-Memory)]
+
+  Idem --> IdemStore[Idempotency Store] --> PG
+  IdemStore --> Redis
+  IdemStore --> Mem
+
+  Audit --> AuditSvc[AuditService] --> Logs[(local jsonl)]
+  AuditSvc --> PG
+  AuditSvc --> Redis
+
+  TenantMgr --> TenantRepo[Tenant Repo] --> PG
+  TenantMgr --> Config[config.yaml / Env]
 ```
 
 ## 💰 Monetization (For Developers)

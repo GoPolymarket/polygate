@@ -2,9 +2,11 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/GoPolymarket/polygate/internal/middleware"
 	"github.com/GoPolymarket/polygate/internal/model"
+	"github.com/GoPolymarket/polygate/internal/pkg/apperrors"
 	"github.com/GoPolymarket/polygate/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -18,56 +20,48 @@ func NewOrderHandler(svc *service.GatewayService) *OrderHandler {
 }
 
 func (h *OrderHandler) PlaceOrder(c *gin.Context) {
-	// 1. Get Tenant from Context (set by AuthMiddleware)
 	tenantVal, exists := c.Get(middleware.ContextTenantKey)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: missing tenant context"})
+		c.Error(apperrors.New(apperrors.ErrAuthFailed, "unauthorized: missing tenant context", nil))
 		return
 	}
 	tenant := tenantVal.(*model.Tenant)
 
-	// 2. Bind Request
-	var req service.OrderRequest
+	var req model.OrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(apperrors.NewInvalidRequest(err.Error()))
 		return
 	}
 
-	// 3. Call Service
 	resp, err := h.svc.PlaceOrder(c.Request.Context(), tenant, req)
 	if err != nil {
 		middleware.AddAuditContext(c, "error", err.Error())
-		// In a real app, map errors to status codes (400 vs 500)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.Error(mapServiceError(err))
 		return
 	}
 
-	// middleware.AddAuditContext(c, "order_id", resp.OrderID)
-	// middleware.AddAuditContext(c, "tx_hashes", resp.TransactionHashes)
-	// TODO: Inspect resp structure to log correct fields
 	middleware.AddAuditContext(c, "status", "success")
-
 	c.JSON(http.StatusOK, resp)
 }
 
 func (h *OrderHandler) BuildTypedOrder(c *gin.Context) {
 	tenantVal, exists := c.Get(middleware.ContextTenantKey)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: missing tenant context"})
+		c.Error(apperrors.New(apperrors.ErrAuthFailed, "unauthorized: missing tenant context", nil))
 		return
 	}
 	tenant := tenantVal.(*model.Tenant)
 
-	var req service.OrderRequest
+	var req model.OrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(apperrors.NewInvalidRequest(err.Error()))
 		return
 	}
 
 	resp, err := h.svc.BuildTypedOrder(c.Request.Context(), tenant, req)
 	if err != nil {
 		middleware.AddAuditContext(c, "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Error(mapServiceError(err))
 		return
 	}
 
@@ -79,13 +73,13 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	orderID := c.Param("id")
 
 	if orderID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "order id is required"})
+		c.Error(apperrors.NewInvalidRequest("order id is required"))
 		return
 	}
 
-	resp, err := h.svc.CancelOrder(c.Request.Context(), tenant, service.CancelOrderInput{ID: orderID})
+	resp, err := h.svc.CancelOrder(c.Request.Context(), tenant, model.CancelOrderInput{ID: orderID})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.Error(mapServiceError(err))
 		return
 	}
 	
@@ -100,11 +94,71 @@ func (h *OrderHandler) CancelAll(c *gin.Context) {
 
 	resp, err := h.svc.CancelAllOrders(c.Request.Context(), tenant)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.Error(mapServiceError(err))
 		return
 	}
 
 	middleware.AddAuditContext(c, "action", "cancel_all")
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func (h *OrderHandler) GetOrderbook(c *gin.Context) {
+	tokenID := c.Param("id")
+	if tokenID == "" {
+		c.Error(apperrors.NewInvalidRequest("token_id is required"))
+		return
+	}
+
+	book := h.svc.GetOrderbook(tokenID)
+	if book == nil {
+		c.Error(apperrors.New(apperrors.ErrNotFound, "orderbook not found or not subscribed", nil))
+		return
+	}
+
+	bids, asks := book.GetCopy()
+	c.JSON(http.StatusOK, gin.H{
+		"token_id":     tokenID,
+		"last_updated": book.LastUpdated,
+		"bids":         bids,
+		"asks":         asks,
+	})
+}
+
+func (h *OrderHandler) GetFills(c *gin.Context) {
+	fills := h.svc.GetFills()
+	c.JSON(http.StatusOK, gin.H{
+		"fills": fills,
+		"count": len(fills),
+	})
+}
+
+func (h *OrderHandler) Panic(c *gin.Context) {
+	tenant := c.MustGet(middleware.ContextTenantKey).(*model.Tenant)
+	
+	if err := h.svc.ActivatePanicMode(c.Request.Context(), tenant); err != nil {
+		c.Error(mapServiceError(err))
+		return
+	}
+
+	middleware.AddAuditContext(c, "action", "panic_mode_activated")
+	c.JSON(http.StatusOK, gin.H{"status": "panic_mode_active", "message": "all trading suspended and orders cancelled"})
+}
+
+// mapServiceError maps generic errors to AppErrors based on content
+func mapServiceError(err error) error {
+	msg := err.Error()
+	if strings.Contains(msg, "risk reject") {
+		return apperrors.NewRiskReject(msg)
+	}
+	if strings.Contains(msg, "signature") || strings.Contains(msg, "unauthorized") {
+		return apperrors.New(apperrors.ErrAuthFailed, msg, err)
+	}
+	if strings.Contains(msg, "nonce") {
+		return apperrors.New(apperrors.ErrNonce, msg, err)
+	}
+	if strings.Contains(msg, "panic") {
+		return apperrors.New(apperrors.ErrSystemPanic, msg, err)
+	}
+	return apperrors.Wrap(err)
 }
