@@ -5,7 +5,8 @@ server:
 auth:
   # Optional: Gateway API Key required by X-Gateway-Key header
   require_api_key: true
-  api_key: "sk-default-12345"
+  # Required when require_api_key=true in single-tenant mode. Do not use example/default values.
+  api_key: ""
   # Optional: Admin key required for tenant CRUD
   admin_key: ""
   admin_secret_key: ""

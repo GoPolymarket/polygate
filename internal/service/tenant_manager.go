@@ -94,8 +94,10 @@ func NewTenantManager(cfg *config.Config, repo TenantRepo) *TenantManager {
 				Burst: cfg.RateLimit.Burst,
 			},
 		}
-		if defaultTenant.ApiKey == "" {
-			defaultTenant.ApiKey = "sk-default-12345"
+		if cfg.Auth.RequireAPIKey && defaultTenant.ApiKey == "" {
+			// With API key auth enabled, never mint a predictable fallback key.
+			// Startup validation should catch this misconfiguration.
+			return tm
 		}
 		tm.RegisterTenant(defaultTenant)
 		tm.defaultTenant = defaultTenant

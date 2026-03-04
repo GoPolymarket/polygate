@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/GoPolymarket/polygate/internal/pkg/logger"
@@ -169,4 +170,24 @@ func Load() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// Validate checks high-impact security and bootstrap constraints.
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	if c.Auth.RequireAPIKey {
+		authKey := strings.TrimSpace(c.Auth.APIKey)
+		if authKey == "sk-default-12345" {
+			return fmt.Errorf("auth.api_key uses insecure placeholder value")
+		}
+
+		if authKey == "" && len(c.Tenants) == 0 && strings.TrimSpace(c.Polymarket.ApiKey) != "" {
+			return fmt.Errorf("auth.api_key is required when auth.require_api_key=true in single-tenant mode")
+		}
+	}
+
+	return nil
 }

@@ -30,6 +30,10 @@ func main() {
 		logger.Error("Failed to load config", "error", err)
 		os.Exit(1)
 	}
+	if err := cfg.Validate(); err != nil {
+		logger.Error("Invalid config", "error", err)
+		os.Exit(1)
+	}
 
 	// 2. Initialize Persistence
 	// Risk Persistence (Redis > Memory)
