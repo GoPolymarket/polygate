@@ -127,7 +127,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("server.port", "8080")
 	viper.SetDefault("server.read_only", false)
 	viper.SetDefault("risk.max_slippage", 0.05)
-	viper.SetDefault("auth.require_api_key", false)
+	viper.SetDefault("auth.require_api_key", true)
 	viper.SetDefault("auth.admin_key", "")
 	viper.SetDefault("auth.admin_secret_key", "")
 	viper.SetDefault("redis.idempotency_ttl_seconds", 86400)
@@ -149,9 +149,9 @@ func Load() (*Config, error) {
 
 	// Default Builder Credentials (YOUR KEYS GO HERE)
 	// 当用户没有在配置文件里覆盖这些值时，就会使用你的 Key
-	viper.SetDefault("builder.api_key", "YOUR_DEFAULT_BUILDER_KEY")
-	viper.SetDefault("builder.api_secret", "YOUR_DEFAULT_BUILDER_SECRET")
-	viper.SetDefault("builder.api_passphrase", "YOUR_DEFAULT_BUILDER_PASSPHRASE")
+	viper.SetDefault("builder.api_key", "")
+	viper.SetDefault("builder.api_secret", "")
+	viper.SetDefault("builder.api_passphrase", "")
 	viper.SetDefault("relayer.base_url", "https://relayer-v2.polymarket.com")
 	viper.SetDefault("relayer.chain_id", 137)
 

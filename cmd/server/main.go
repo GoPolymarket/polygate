@@ -139,8 +139,13 @@ func main() {
 
 	// 6. Start Server with Graceful Shutdown
 	srv := &http.Server{
-		Addr:    ":" + cfg.Server.Port,
-		Handler: r,
+		Addr:              ":" + cfg.Server.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
